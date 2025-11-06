@@ -637,7 +637,7 @@ def process_video(person_model, dragon_model, video_path, confs, realtime_filter
             # 实时预览
             if show_preview and preview_placeholder is not None:
                 preview_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                preview_placeholder.image(preview_img, caption=f"帧 {frame_id}", use_container_width=True)
+                preview_placeholder.image(preview_img, caption=f"帧 {frame_id}", width='stretch')
 
             if save_video and 'out' in locals() and out.isOpened():
                 try:
@@ -841,7 +841,7 @@ def process_camera(person_model, dragon_model, cam_id, confs, realtime_filter_me
                 img = put_chinese_text(img, f"Action: {display_class}")
 
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            preview_placeholder.image(img_rgb, channels="RGB", use_container_width=True)
+            preview_placeholder.image(img_rgb, channels="RGB", width='stretch')
 
             if save_video and video_writer is not None and video_writer.isOpened():
                 try:
@@ -921,7 +921,7 @@ def main():
     """, unsafe_allow_html=True)
     
     try:
-        st.sidebar.image(str(STATIC_DIR / "logo.jpg"), use_container_width=True)
+        st.sidebar.image(str(STATIC_DIR / "logo.jpg"), width='stretch')
     except Exception as e:
         st.sidebar.warning(f"未找到Logo文件: {STATIC_DIR / 'logo.jpg'}")
     
@@ -935,24 +935,24 @@ def main():
     # 侧边栏 - 选项卡选择
     st.sidebar.title("导航菜单")
     # 为每个按钮添加唯一的key参数
-    if st.sidebar.button("功能演示", use_container_width=True, 
+    if st.sidebar.button("功能演示", width='stretch', 
                          type="primary" if st.session_state.current_tab == "功能演示" else "secondary",
                          key="btn_feature_demo"):
         st.session_state.current_tab = "功能演示"
     
-    if st.sidebar.button("快速体验", use_container_width=True, 
+    if st.sidebar.button("快速体验", width='stretch', 
                          type="primary" if st.session_state.current_tab == "快速体验" else "secondary",
                          key="btn_quick_start"):
         st.session_state.current_tab = "快速体验"
     
     # 新增参数设置独立板块
-    if st.sidebar.button("参数设置", use_container_width=True, 
+    if st.sidebar.button("参数设置", width='stretch', 
                          type="primary" if st.session_state.current_tab == "参数设置" else "secondary",
                          key="btn_settings"):
         st.session_state.current_tab = "参数设置"
     
     # 新增开发团队板块
-    if st.sidebar.button("开发团队", use_container_width=True, 
+    if st.sidebar.button("开发团队", width='stretch', 
                          type="primary" if st.session_state.current_tab == "开发团队" else "secondary",
                          key="btn_team"):
         st.session_state.current_tab = "开发团队"
@@ -1094,10 +1094,10 @@ def main():
                 preview_placeholder.image(
                     cv2.cvtColor(original_img, cv2.COLOR_BGR2RGB), 
                     caption="原图预览",
-                    use_container_width=True
+                    width='stretch'
                 )
                 
-                if st.button("开始检测图片", use_container_width=True, type="primary", key="btn_process_image"):
+                if st.button("开始检测图片", width='stretch', type="primary", key="btn_process_image"):
                     with st.spinner("正在处理图片..."):
                         # 获取参数设置
                         params = get_params()
@@ -1129,7 +1129,7 @@ def main():
                         preview_placeholder.image(
                             cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB), 
                             caption="检测结果",
-                            use_container_width=True
+                            width='stretch'
                         )
                         
                         # 提示用户及时保存
@@ -1146,7 +1146,7 @@ def main():
                                         data=file,
                                         file_name="person_detection.json",
                                         mime="application/json",
-                                        use_container_width=True,
+                                        width='stretch',
                                         key="download_person_json"
                                     )
                             with download_cols[1]:
@@ -1156,7 +1156,7 @@ def main():
                                         data=file,
                                         file_name="dragon_detection.json",
                                         mime="application/json",
-                                        use_container_width=True,
+                                        width='stretch',
                                         key="download_dragon_json"
                                     )
                         
@@ -1168,7 +1168,7 @@ def main():
                                         data=file,
                                         file_name="person_detection.txt",
                                         mime="text/plain",
-                                        use_container_width=True,
+                                        width='stretch',
                                         key="download_person_txt"
                                     )
                             with download_cols[3]:
@@ -1178,7 +1178,7 @@ def main():
                                         data=file,
                                         file_name="dragon_detection.txt",
                                         mime="text/plain",
-                                        use_container_width=True,
+                                        width='stretch',
                                         key="download_dragon_txt"
                                     )
                         
@@ -1189,7 +1189,7 @@ def main():
                                 data=file,
                                 file_name="detection_result.jpg",
                                 mime="image/jpeg",
-                                use_container_width=True,
+                                width='stretch',
                                 key="download_result_image"
                             )
 
@@ -1223,9 +1223,9 @@ def main():
                 # 控制按钮
                 col1, col2 = st.columns(2)
                 with col1:
-                    start_button = st.button("开始处理视频", use_container_width=True, type="primary", key="btn_start_video")
+                    start_button = st.button("开始处理视频", width='stretch', type="primary", key="btn_start_video")
                 with col2:
-                    stop_button = st.button("终止处理", use_container_width=True, disabled=True, key="btn_stop_video")
+                    stop_button = st.button("终止处理", width='stretch', disabled=True, key="btn_stop_video")
                 
                 if start_button:
                     st.session_state.analysis_running = True
@@ -1303,7 +1303,7 @@ def main():
                                         data=file,
                                         file_name="person_detection.json",
                                         mime="application/json",
-                                        use_container_width=True,
+                                        width='stretch',
                                         key="download_video_person_json"
                                     )
                             with download_cols[1]:
@@ -1313,7 +1313,7 @@ def main():
                                         data=file,
                                         file_name="dragon_detection.json",
                                         mime="application/json",
-                                        use_container_width=True,
+                                        width='stretch',
                                         key="download_video_dragon_json"
                                     )
                         
@@ -1325,7 +1325,7 @@ def main():
                                         data=file,
                                         file_name="person_detection.txt",
                                         mime="text/plain",
-                                        use_container_width=True,
+                                        width='stretch',
                                         key="download_video_person_txt"
                                     )
                             with download_cols[3]:
@@ -1335,7 +1335,7 @@ def main():
                                         data=file,
                                         file_name="dragon_detection.txt",
                                         mime="text/plain",
-                                        use_container_width=True,
+                                        width='stretch',
                                         key="download_video_dragon_txt"
                                     )
                         
@@ -1346,7 +1346,7 @@ def main():
                                 data=file,
                                 file_name="processed_video.mp4",
                                 mime="video/mp4",
-                                use_container_width=True,
+                                width='stretch',
                                 key="download_processed_video"
                             )
                     elif output_video_path:
@@ -1368,10 +1368,10 @@ def main():
                 # 控制按钮
                 col1, col2 = st.columns(2)
                 with col1:
-                    start_button = st.button("开始摄像头检测", use_container_width=True, type="primary", 
+                    start_button = st.button("开始摄像头检测", width='stretch', type="primary", 
                                           disabled=st.session_state.analysis_running, key="btn_start_camera")
                 with col2:
-                    stop_button = st.button("停止摄像头检测", use_container_width=True, 
+                    stop_button = st.button("停止摄像头检测", width='stretch', 
                                          disabled=not st.session_state.analysis_running, key="btn_stop_camera")
                 
                 # 状态管理
@@ -1424,7 +1424,7 @@ def main():
                                 data=file,
                                 file_name="camera_recording.mp4",
                                 mime="video/mp4",
-                                use_container_width=True,
+                                uwidth='stretch',
                                 key="download_camera_video"
                             )
                     elif output_path:
@@ -1684,7 +1684,7 @@ def main():
                 key="select_smooth"
             )
         
-        if st.button("保存参数设置", use_container_width=True, type="primary", key="btn_save_params"):
+        if st.button("保存参数设置", width='stretch', type="primary", key="btn_save_params"):
             st.success("参数设置已保存！")
 
     # 开发团队页面
@@ -1708,9 +1708,9 @@ def main():
         col1, col2 = st.columns([1, 9])  # 调整比例使头像区域更小
         with col1:
             try:
-                st.image(str(STATIC_DIR / "avatars" / "HC.jpg"), caption="项目负责人", use_container_width=True)
+                st.image(str(STATIC_DIR / "avatars" / "HC.jpg"), caption="项目负责人", width='stretch')
             except:
-                st.image("https://via.placeholder.com/100", caption="项目负责人", use_container_width=True)
+                st.image("https://via.placeholder.com/100", caption="项目负责人", width='stretch')
         with col2:
             st.markdown("""
             ### 霍畅 - 项目负责人
@@ -1721,9 +1721,9 @@ def main():
         col1, col2 = st.columns([1, 9])
         with col1:
             try:
-                st.image(str(STATIC_DIR / "avatars" / "LZC.jpg"), caption="算法工程师", use_container_width=True)
+                st.image(str(STATIC_DIR / "avatars" / "LZC.jpg"), caption="算法工程师", width='stretch')
             except:
-                st.image("https://via.placeholder.com/100", caption="算法工程师", use_container_width=True)
+                st.image("https://via.placeholder.com/100", caption="算法工程师", width='stretch')
         with col2:
             st.markdown("""
             ### 卢子诚 - 算法工程师
@@ -1734,9 +1734,9 @@ def main():
         col1, col2 = st.columns([1, 9])
         with col1:
             try:
-                st.image(str(STATIC_DIR / "avatars" / "FZY.jpg"), caption="UI/UX设计师", use_container_width=True)
+                st.image(str(STATIC_DIR / "avatars" / "FZY.jpg"), caption="UI/UX设计师", width='stretch')
             except:
-                st.image("https://via.placeholder.com/100", caption="UI/UX设计师", use_container_width=True)
+                st.image("https://via.placeholder.com/100", caption="UI/UX设计师", width='stretch')
         with col2:
             st.markdown("""
             ### 方子嫣 - UI/UX设计师
@@ -1747,9 +1747,9 @@ def main():
         col1, col2 = st.columns([1, 9])
         with col1:
             try:
-                st.image(str(STATIC_DIR / "avatars" / "DWY.jpg"), caption="文案策划", use_container_width=True)
+                st.image(str(STATIC_DIR / "avatars" / "DWY.jpg"), caption="文案策划", width='stretch')
             except:
-                st.image("https://via.placeholder.com/100", caption="文案策划", use_container_width=True)
+                st.image("https://via.placeholder.com/100", caption="文案策划", width='stretch')
         with col2:
             st.markdown("""
             ### 丁闻玥 - 创意内容总监
@@ -1760,9 +1760,9 @@ def main():
         col1, col2 = st.columns([1, 9])
         with col1:
             try:
-                st.image(str(STATIC_DIR / "avatars" / "ZMH.jpg"), caption="数据工程师", use_container_width=True)
+                st.image(str(STATIC_DIR / "avatars" / "ZMH.jpg"), caption="数据工程师", width='stretch')
             except:
-                st.image("https://via.placeholder.com/100", caption="数据工程师", use_container_width=True)
+                st.image("https://via.placeholder.com/100", caption="数据工程师", width='stretch')
         with col2:
             st.markdown("""
             ### 张明涵 - 数据工程师
@@ -1773,9 +1773,9 @@ def main():
         col1, col2 = st.columns([1, 9])
         with col1:
             try:
-                st.image(str(STATIC_DIR / "avatars" / "ZKX.jpg"), caption="产品宣传", use_container_width=True)
+                st.image(str(STATIC_DIR / "avatars" / "ZKX.jpg"), caption="产品宣传", width='stretch')
             except:
-                st.image("https://via.placeholder.com/100", caption="产品宣传", use_container_width=True)
+                st.image("https://via.placeholder.com/100", caption="产品宣传", uwidth='stretch')
         with col2:
             st.markdown("""
             ### 赵康西 – 产品可视化专员
