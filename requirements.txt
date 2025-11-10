@@ -1,11 +1,12 @@
 streamlit
 ultralytics
-opencv-python
+opencv-python-headless
 torch
 torchvision
 filterpy
 Pillow
 psutil
 numpy==1.24.3
+
 
 
