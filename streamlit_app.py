@@ -17,7 +17,7 @@ from ultralytics import YOLO
 import time
 import psutil
 import base64
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration, WebRtcMode
 import av  # 处理视频帧
 
 
@@ -938,7 +938,7 @@ def process_camera_stream(params, gpu_monitor=None):
 
     webrtc_streamer(
         key="camera",
-        mode="sendrecv",
+        mode=WebRtcMode.SENDRECV,
         rtc_configuration=RTC_CONFIGURATION,
         video_processor_factory=VideoProcessor,
         media_stream_constraints={"video": True, "audio": False},
