@@ -1376,6 +1376,8 @@ def main():
                 
                 st.info("浏览器正在请求摄像头权限，请允许！")
                 import camera_webrtc
+
+    
     # 参数设置独立页面
     elif st.session_state.current_tab == "参数设置":
         st.markdown("<h1 style='text-align: center;'>参数设置</h1>", unsafe_allow_html=True)
@@ -1859,4 +1861,5 @@ def get_params():
 
 if __name__ == "__main__":
     main()
+
 
