@@ -316,51 +316,19 @@ def classify_action(model, classes, person_array, dragon_array, device):
 
     return classes[pred]
 
-# def put_chinese_text(img, text, pos=(30,80), color=(0,255,0), font_size=32):
-#     try:
-#         img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-#         draw = ImageDraw.Draw(img_pil)
-#         try:
-#             font = ImageFont.truetype("simsun.ttc", font_size)
-#         except:
-#             font = ImageFont.load_default()
-#         draw.text(pos, text, font=font, fill=color)
-#         img = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
-#     except Exception as e:
-#         cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-#     return img
-
-
-def put_chinese_text(img_bgr, text, pos=(30, 80), color=(0, 255, 0), font_size=32):
-
-    # 将 OpenCV BGR 转为 PIL RGB
-    img_pil = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
-
-    draw = ImageDraw.Draw(img_pil)
-
-    # 尝试加载常见中文字体
-    font_path_candidates = [
-        "/usr/share/fonts/truetype/arphic/ukai.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    ]
-    font = None
-    for path in font_path_candidates:
-        if os.path.exists(path):
-            font = ImageFont.truetype(path, font_size)
-            break
-
-    if font is None:
-        # 若系统无中文字体则用默认英文字体，避免崩溃
-        font = ImageFont.load_default()
-
-    # PIL 颜色为 RGB
-    color_rgb = (color[2], color[1], color[0])
-    draw.text(pos, text, font=font, fill=color_rgb)
-
-    # 转回 OpenCV BGR
-    return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+def put_chinese_text(img, text, pos=(30,80), color=(0,255,0), font_size=32):
+    try:
+        img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(img_pil)
+        try:
+            font = ImageFont.truetype("simsun.ttc", font_size)
+        except:
+            font = ImageFont.load_default()
+        draw.text(pos, text, font=font, fill=color)
+        img = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+    except Exception as e:
+        cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+    return img
 
 
 # ---------------------- 图像检测 ----------------------
@@ -1065,7 +1033,7 @@ def process_camera_stream(params, gpu_monitor=None):
                 if self.display_class:
                     img = put_chinese_text(
                         img, 
-                        f"动作分类：{self.display_class}",
+                        f"Action:{self.display_class}",
                         pos=(30, 60),
                         color=(0, 255, 0),
                         font_size=32
