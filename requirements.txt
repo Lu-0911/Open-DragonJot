@@ -1,4 +1,4 @@
---prefer-binary opencv-python-headless
+--constraint <(echo "opencv-python==1000.0.0")
 opencv-python-headless
 streamlit
 streamlit-webrtc
@@ -9,6 +9,7 @@ filterpy
 Pillow
 psutil
 numpy==1.24.3
+
 
 
 
