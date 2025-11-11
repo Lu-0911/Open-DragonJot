@@ -886,27 +886,27 @@ def process_camera(person_model, dragon_model, cam_id, confs, realtime_filter_me
         return output_video_path
     
 
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration, WebRtcMode
+import av
+import cv2
+import numpy as np
+import time, statistics
+from ultralytics import YOLO
+from collections import deque
+from pathlib import Path
+
 def process_camera_stream(params, gpu_monitor=None):
-    st.subheader("📷 摄像头检测模式（浏览器）")
-    st.markdown("点击下方按钮以开始检测，如需切换摄像头，请在浏览器选择正确设备。")
-
-    # 初始化会话状态
-    if "camera_active" not in st.session_state:
-        st.session_state["camera_active"] = False
-
-    # 控制按钮布局
-    col1, col2 = st.columns(2)
-    if col1.button("▶ 开始检测", disabled=st.session_state["camera_active"]):
-        st.session_state["camera_active"] = True
-    if col2.button("⏹ 停止检测", disabled=not st.session_state["camera_active"]):
-        st.session_state["camera_active"] = False
-
+    """
+    完整版 WebRTC 摄像头识别流处理
+    （保留 UI 原样，加入人体检测、龙骨架、动作分类、视频保存、GPU监控）
+    """
     RTC_CONFIGURATION = RTCConfiguration({
         "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
     })
 
     class VideoProcessor(VideoProcessorBase):
         def __init__(self):
+            # 参数初始化
             self.model_person = None
             self.model_dragon = None
             self.device = params['device']
@@ -915,46 +915,174 @@ def process_camera_stream(params, gpu_monitor=None):
             self.node_size = params['node_size']
             self.line_thickness = params['line_thickness']
             self.person_conf, self.dragon_conf, self.person_kpt_conf, self.dragon_kpt_conf = params['confs']
+            self.single_dragon = params.get('single_dragon', True)
+            self.only_person = params.get('only_person', False)
+            self.only_dragon = params.get('only_dragon', False)
+
+            # 分类模型
+            self.classify = params.get('classify', False)
+            self.classify_model = params.get('classify_model', None)
+            self.classify_model_obj = None
+            self.classes = None
+            self.class_buffer = deque(maxlen=30)
+            self.display_class = None
+
+            # 过滤器
+            self.realtime_filter_method = params.get('realtime_filter_method', None)
+            self.realtime_filter = None
+            if self.realtime_filter_method == 'ema':
+                self.realtime_filter = EMAFilter(alpha=0.4)
+            elif self.realtime_filter_method == 'kalman':
+                self.realtime_filter = KalmanFilterWrapper(
+                    num_points=len(DRAGON_KEYPOINT_NAMES),
+                    dt=1 / 30.0,
+                    process_noise=0.1,
+                    measurement_noise=5.0,
+                )
+
+            # 视频保存
+            self.save_video = params.get('save_video', False)
+            self.output_video_path = OUTPUT_DIR / "camera_output.mp4"
+            self.video_writer = None
+            self.fps = 0.0
+            self.last_time = time.time()
 
         def _init_models(self):
-            if self.model_person is None and not params['only_dragon']:
-                self.model_person = YOLO(str(params['person_model'])).to(self.device)
-            if self.model_dragon is None and not params['only_person']:
-                self.model_dragon = YOLO(str(params['dragon_model'])).to(self.device)
+            """懒加载 YOLO 模型与分类模型"""
+            if self.model_person is None and not self.only_dragon:
+                person_model_path = Path(params['person_model'])
+                if not person_model_path.is_absolute():
+                    person_model_path = MODELS_DIR / person_model_path
+                self.model_person = YOLO(str(person_model_path)).to(self.device)
+
+            if self.model_dragon is None and not self.only_person:
+                dragon_model_path = Path(params['dragon_model'])
+                if not dragon_model_path.is_absolute():
+                    dragon_model_path = MODELS_DIR / dragon_model_path
+                self.model_dragon = YOLO(str(dragon_model_path)).to(self.device)
+
+            if self.classify and self.classify_model_obj is None and self.classify_model:
+                self.classify_model_obj, self.classes = load_classification_model(MODELS_DIR / self.classify_model, self.device)
+
+        def _init_video_writer(self, frame_shape):
+            if not self.save_video:
+                return
+            h, w = frame_shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self.video_writer = cv2.VideoWriter(str(self.output_video_path), fourcc, 20.0, (w, h))
 
         def recv(self, frame):
             self._init_models()
+
             img = frame.to_ndarray(format="bgr24")
 
-            # 人检测
+            # FPS 更新
+            now = time.time()
+            dt = now - self.last_time
+            if dt > 0:
+                self.fps = 1.0 / dt
+            self.last_time = now
+
+            # 检测人
             if self.model_person:
                 results_person = self.model_person(img, conf=self.person_conf, verbose=False)
                 img = results_person[0].plot(boxes=False)
+            else:
+                results_person = None
 
-            # 龙检测
+            # 检测龙
             if self.model_dragon:
                 results_dragon = self.model_dragon(img, conf=self.dragon_conf, verbose=False)
-                if results_dragon[0].keypoints is not None:
-                    kpts = results_dragon[0].keypoints.xy.cpu().numpy()[0]
-                    conf = results_dragon[0].keypoints.conf.cpu().numpy()[0]
-                    for j, ((x, y), c) in enumerate(zip(kpts, conf)):
+            else:
+                results_dragon = None
+
+            # 绘制龙关键点与骨架
+            if results_dragon and results_dragon[0].keypoints is not None:
+                boxes = results_dragon[0].boxes
+                kpts = results_dragon[0].keypoints.xy.cpu().numpy()
+                conf = results_dragon[0].keypoints.conf.cpu().numpy()
+
+                if self.single_dragon and boxes is not None and len(boxes) > 0:
+                    best_idx = np.argmax(boxes.conf.cpu().numpy())
+                    kpts = kpts[best_idx:best_idx + 1]
+                    conf = conf[best_idx:best_idx + 1]
+
+                # 平滑
+                if self.realtime_filter is not None and len(kpts) > 0:
+                    smoothed = self.realtime_filter.update(kpts[0])
+                    kpts[0] = smoothed.reshape(-1, 2)
+
+                # 绘制点与线
+                for i, kp_set in enumerate(kpts):
+                    for j, ((x, y), c) in enumerate(zip(kp_set, conf[i])):
                         if c > self.dragon_kpt_conf:
                             color = self.node_colors[j % len(self.node_colors)]
                             cv2.circle(img, (int(x), int(y)), self.node_size, color, -1)
+                            cv2.putText(img, str(j + 1), (int(x)+5, int(y)-5),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                    for (a, b) in DRAGON_SKELETON:
+                        if conf[i][a] > self.dragon_kpt_conf and conf[i][b] > self.dragon_kpt_conf:
+                            pt1, pt2 = tuple(map(int, kp_set[a])), tuple(map(int, kp_set[b]))
+                            cv2.line(img, pt1, pt2, self.line_color, self.line_thickness)
 
+            # 分类
+            if self.classify and self.classify_model_obj is not None:
+                try:
+                    frame_wh = (img.shape[1], img.shape[0])
+                    person_array, dragon_array = build_class_inputs(results_person, results_dragon, frame_wh)
+                    label = classify_action(self.classify_model_obj, self.classes, person_array, dragon_array, self.device)
+                    if label is not None:
+                        self.class_buffer.append(label)
+                        if len(self.class_buffer) == 30:
+                            stable_class = statistics.mode(self.class_buffer)
+                            self.display_class = stable_class
+                except Exception:
+                    pass
+
+                if self.display_class:
+                    img = put_chinese_text(img, f"Action: {self.display_class}")
+
+            # 初始化视频写入
+            if self.save_video and self.video_writer is None:
+                self._init_video_writer(img.shape)
+
+            if self.video_writer:
+                try:
+                    self.video_writer.write(img)
+                except Exception as e:
+                    print(f"[WARN] 写入视频失败: {e}")
+
+            # GPU监控（可选）
+            if gpu_monitor:
+                gpu_monitor.update_fps()
+                if gpu_monitor.use_gpu:
+                    mem_used, mem_cached = gpu_monitor.get_memory_usage()
+                    print(f"[GPU] FPS {self.fps:.1f}, Mem {mem_used:.2f} GB")
+                else:
+                    print(f"[CPU] FPS {self.fps:.1f}")
+
+            # 输出帧
             return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-    # ✅ 关键改动：通过 session_state 控制组件渲染
-    if st.session_state["camera_active"]:
-        webrtc_streamer(
-            key="camera",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTC_CONFIGURATION,
-            video_processor_factory=VideoProcessor,
-            media_stream_constraints={"video": True, "audio": False},
-            async_processing=True,
-        )
-        
+        def on_stop(self):
+            if self.video_writer:
+                self.video_writer.release()
+                print("[INFO] 录制视频已保存:", self.output_video_path)
+
+    # 启动 webrtc
+    webrtc_streamer(
+        key="camera",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=RTC_CONFIGURATION,
+        video_processor_factory=VideoProcessor,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
+
+
+
+
+     
 # ---------------------- 检测可用摄像头 ----------------------
 @st.cache_resource(show_spinner=False)
 def get_available_cameras(max_test=5):
