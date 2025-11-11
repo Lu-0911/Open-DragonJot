@@ -1374,65 +1374,8 @@ def main():
                     stop_button = st.button("停止摄像头检测", width='stretch', 
                                          disabled=not st.session_state.analysis_running, key="btn_stop_camera")
                 
-                # 状态管理
-                if start_button and not st.session_state.analysis_running:
-                    st.session_state.analysis_running = True
-                    st.session_state.stop_flag = False
-                    
-                    # 获取参数设置
-                    params = get_params()
-                    
-                    def stop_check():
-                        return st.session_state.stop_flag
-                    
-                    # 直接在主线程运行摄像头检测
-                    output_path = process_camera(
-                        params['person_model'], params['dragon_model'], cam_id, params['confs'],
-                        params['realtime_filter_method'], params['device'], single_dragon=params['single_dragon'],
-                        only_person=params['only_person'], only_dragon=params['only_dragon'],
-                        classify=params['classify'], classify_model=params['classify_model'],
-                        save_video=params['save_video'], preview_placeholder=preview_placeholder,
-                        stop_flag=stop_check,
-                        node_colors=params['node_colors'], node_size=params['node_size'],
-                        line_color=params['line_color'], line_thickness=params['line_thickness'],
-                        gpu_monitor=gpu_monitor
-                    )
-                    
-                    st.session_state.analysis_running = False
-                    st.session_state.camera_video_path = output_path
-                    
-                    # 显示摄像头录制的视频（如果有）
-                    if output_path and output_path.exists():
-                        st.subheader("摄像头录制结果")
-                        try:
-                            with open(output_path, "rb") as file:
-                                video_bytes = file.read()
-                                if len(video_bytes) < 1024:  # 小于1KB的视频文件可能为空
-                                    st.error("生成的摄像头视频文件过小，可能为空或损坏")
-                                else:
-                                    st.video(video_bytes, format="video/mp4")
-                        except Exception as e:
-                            st.error(f"无法读取摄像头视频文件: {str(e)}")
-                        
-                        # 提示保存
-                        st.success("请及时保存录制结果，关闭浏览器后文件将自动清除。")
-                        
-                        # 下载按钮
-                        with open(output_path, "rb") as file:
-                            st.download_button(
-                                label="📥 下载录制视频",
-                                data=file,
-                                file_name="camera_recording.mp4",
-                                mime="video/mp4",
-                                uwidth='stretch',
-                                key="download_camera_video"
-                            )
-                    elif output_path:
-                        st.error(f"摄像头视频录制失败，文件未生成: {output_path}")
-                
-                if stop_button and st.session_state.analysis_running:
-                    st.session_state.stop_flag = True
-
+                st.info("浏览器正在请求摄像头权限，请允许！")
+                import camera_webrtc
     # 参数设置独立页面
     elif st.session_state.current_tab == "参数设置":
         st.markdown("<h1 style='text-align: center;'>参数设置</h1>", unsafe_allow_html=True)
@@ -1916,3 +1859,4 @@ def get_params():
 
 if __name__ == "__main__":
     main()
+
