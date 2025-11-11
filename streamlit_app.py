@@ -886,27 +886,15 @@ def process_camera(person_model, dragon_model, cam_id, confs, realtime_filter_me
         return output_video_path
     
 
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration, WebRtcMode
-import av
-import cv2
-import numpy as np
-import time, statistics
-from ultralytics import YOLO
-from collections import deque
-from pathlib import Path
-
 def process_camera_stream(params, gpu_monitor=None):
-    """
-    完整版 WebRTC 摄像头识别流处理
-    （保留 UI 原样，加入人体检测、龙骨架、动作分类、视频保存、GPU监控）
-    """
+    """完整摄像头识别逻辑"""
     RTC_CONFIGURATION = RTCConfiguration({
         "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
     })
 
     class VideoProcessor(VideoProcessorBase):
         def __init__(self):
-            # 参数初始化
+            # --- 初始化参数 ---
             self.model_person = None
             self.model_dragon = None
             self.device = params['device']
@@ -919,7 +907,7 @@ def process_camera_stream(params, gpu_monitor=None):
             self.only_person = params.get('only_person', False)
             self.only_dragon = params.get('only_dragon', False)
 
-            # 分类模型
+            # --- 分类模型 ---
             self.classify = params.get('classify', False)
             self.classify_model = params.get('classify_model', None)
             self.classify_model_obj = None
@@ -927,9 +915,8 @@ def process_camera_stream(params, gpu_monitor=None):
             self.class_buffer = deque(maxlen=30)
             self.display_class = None
 
-            # 过滤器
+            # --- 实时平滑滤波器 ---
             self.realtime_filter_method = params.get('realtime_filter_method', None)
-            self.realtime_filter = None
             if self.realtime_filter_method == 'ema':
                 self.realtime_filter = EMAFilter(alpha=0.4)
             elif self.realtime_filter_method == 'kalman':
@@ -939,8 +926,10 @@ def process_camera_stream(params, gpu_monitor=None):
                     process_noise=0.1,
                     measurement_noise=5.0,
                 )
+            else:
+                self.realtime_filter = None
 
-            # 视频保存
+            # --- 视频保存 ---
             self.save_video = params.get('save_video', False)
             self.output_video_path = OUTPUT_DIR / "camera_output.mp4"
             self.video_writer = None
@@ -948,7 +937,7 @@ def process_camera_stream(params, gpu_monitor=None):
             self.last_time = time.time()
 
         def _init_models(self):
-            """懒加载 YOLO 模型与分类模型"""
+            """懒加载模型"""
             if self.model_person is None and not self.only_dragon:
                 person_model_path = Path(params['person_model'])
                 if not person_model_path.is_absolute():
@@ -962,7 +951,11 @@ def process_camera_stream(params, gpu_monitor=None):
                 self.model_dragon = YOLO(str(dragon_model_path)).to(self.device)
 
             if self.classify and self.classify_model_obj is None and self.classify_model:
-                self.classify_model_obj, self.classes = load_classification_model(MODELS_DIR / self.classify_model, self.device)
+                self.classify_model_obj, self.classes = load_classification_model(
+                    MODELS_DIR / self.classify_model, self.device
+                )
+
+            print("[INFO] 模型加载完成，可开始实时检测")
 
         def _init_video_writer(self, frame_shape):
             if not self.save_video:
@@ -972,31 +965,29 @@ def process_camera_stream(params, gpu_monitor=None):
             self.video_writer = cv2.VideoWriter(str(self.output_video_path), fourcc, 20.0, (w, h))
 
         def recv(self, frame):
+            # --- 模型初始化 ---
             self._init_models()
-
             img = frame.to_ndarray(format="bgr24")
 
-            # FPS 更新
+            # --- FPS 计算 ---
             now = time.time()
             dt = now - self.last_time
             if dt > 0:
                 self.fps = 1.0 / dt
             self.last_time = now
 
-            # 检测人
+            # --- 人体检测 ---
+            results_person = None
             if self.model_person:
                 results_person = self.model_person(img, conf=self.person_conf, verbose=False)
                 img = results_person[0].plot(boxes=False)
-            else:
-                results_person = None
 
-            # 检测龙
+            # --- 龙检测 ---
+            results_dragon = None
             if self.model_dragon:
                 results_dragon = self.model_dragon(img, conf=self.dragon_conf, verbose=False)
-            else:
-                results_dragon = None
 
-            # 绘制龙关键点与骨架
+            # --- 龙关键点绘制 ---
             if results_dragon and results_dragon[0].keypoints is not None:
                 boxes = results_dragon[0].boxes
                 kpts = results_dragon[0].keypoints.xy.cpu().numpy()
@@ -1007,12 +998,10 @@ def process_camera_stream(params, gpu_monitor=None):
                     kpts = kpts[best_idx:best_idx + 1]
                     conf = conf[best_idx:best_idx + 1]
 
-                # 平滑
                 if self.realtime_filter is not None and len(kpts) > 0:
                     smoothed = self.realtime_filter.update(kpts[0])
                     kpts[0] = smoothed.reshape(-1, 2)
 
-                # 绘制点与线
                 for i, kp_set in enumerate(kpts):
                     for j, ((x, y), c) in enumerate(zip(kp_set, conf[i])):
                         if c > self.dragon_kpt_conf:
@@ -1025,7 +1014,7 @@ def process_camera_stream(params, gpu_monitor=None):
                             pt1, pt2 = tuple(map(int, kp_set[a])), tuple(map(int, kp_set[b]))
                             cv2.line(img, pt1, pt2, self.line_color, self.line_thickness)
 
-            # 分类
+            # --- 动作分类 ---
             if self.classify and self.classify_model_obj is not None:
                 try:
                     frame_wh = (img.shape[1], img.shape[0])
@@ -1033,26 +1022,32 @@ def process_camera_stream(params, gpu_monitor=None):
                     label = classify_action(self.classify_model_obj, self.classes, person_array, dragon_array, self.device)
                     if label is not None:
                         self.class_buffer.append(label)
-                        if len(self.class_buffer) == 30:
+                        if len(self.class_buffer) == self.class_buffer.maxlen:
                             stable_class = statistics.mode(self.class_buffer)
-                            self.display_class = stable_class
+                            if stable_class != self.display_class:
+                                self.display_class = stable_class
                 except Exception:
                     pass
 
                 if self.display_class:
-                    img = put_chinese_text(img, f"Action: {self.display_class}")
+                    img = put_chinese_text(
+                        img, 
+                        f"动作分类：{self.display_class}",
+                        pos=(30, 60),
+                        color=(0, 255, 0),
+                        font_size=32
+                    )
 
-            # 初始化视频写入
+            # --- 视频保存 ---
             if self.save_video and self.video_writer is None:
                 self._init_video_writer(img.shape)
-
             if self.video_writer:
                 try:
                     self.video_writer.write(img)
                 except Exception as e:
                     print(f"[WARN] 写入视频失败: {e}")
 
-            # GPU监控（可选）
+            # --- GPU状态监控（可选）---
             if gpu_monitor:
                 gpu_monitor.update_fps()
                 if gpu_monitor.use_gpu:
@@ -1061,7 +1056,6 @@ def process_camera_stream(params, gpu_monitor=None):
                 else:
                     print(f"[CPU] FPS {self.fps:.1f}")
 
-            # 输出帧
             return av.VideoFrame.from_ndarray(img, format="bgr24")
 
         def on_stop(self):
@@ -1069,7 +1063,7 @@ def process_camera_stream(params, gpu_monitor=None):
                 self.video_writer.release()
                 print("[INFO] 录制视频已保存:", self.output_video_path)
 
-    # 启动 webrtc
+    # --- 启动 WebRTC ---
     webrtc_streamer(
         key="camera",
         mode=WebRtcMode.SENDRECV,
@@ -1078,7 +1072,6 @@ def process_camera_stream(params, gpu_monitor=None):
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
     )
-
 
 
 
