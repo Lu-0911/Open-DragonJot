@@ -1,4 +1,5 @@
 streamlit
+streamlit-webrtc
 ultralytics
 opencv-python-headless
 torch
@@ -7,6 +8,7 @@ filterpy
 Pillow
 psutil
 numpy==1.24.3
+
 
 
 
