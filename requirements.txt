@@ -1,13 +1,15 @@
+--prefer-binary opencv-python-headless
+opencv-python-headless
 streamlit
 streamlit-webrtc
 ultralytics
-opencv-python-headless
 torch
 torchvision
 filterpy
 Pillow
 psutil
 numpy==1.24.3
+
 
 
 
