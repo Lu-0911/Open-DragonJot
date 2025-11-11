@@ -18,7 +18,8 @@ import time
 import psutil
 import base64
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration, WebRtcMode
-import av  # 处理视频帧
+import av
+import threading
 
 
 # ---------------------- 路径配置 ----------------------
@@ -886,66 +887,306 @@ def process_camera(person_model, dragon_model, cam_id, confs, realtime_filter_me
     
 
 def process_camera_stream(params, gpu_monitor=None):
+    """
+    使用 streamlit-webrtc 实现的摄像头检测入口（替换原来的 process_camera）。
+    params: 来自 get_params() 的字典，和原来函数保持一致。
+    gpu_monitor: 你的 GPUMonitor 实例（用于显示GPU/CPU信息）。
+    """
+    st.subheader("📷 摄像头检测模式（浏览器）")
 
+    # UI：摄像头选择（仅用于提示，实际切换由 webrtc 的 device_selector 控制）
+    st.markdown("请选择摄像头（若浏览器弹窗中直接选择设备请以浏览器选择为准）")
+    st.selectbox("选择摄像头（UI提示）", ["默认摄像头"], key="camera_select_ui")
+
+    # 控制按钮（与原先风格一致）
+    col1, col2 = st.columns([1, 1])
+    start_btn = col1.button("▶ 开始检测", key="start_cam_btn", type="primary")
+    stop_btn  = col2.button("⏹ 停止检测", key="stop_cam_btn")
+
+    # 状态占位
+    status_placeholder = st.empty()
+    preview_placeholder = st.empty()  # 备用（webrtc 会在下方渲染）
+
+    # RTC 配置
     RTC_CONFIGURATION = RTCConfiguration({
         "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
     })
 
-    class VideoProcessor(VideoProcessorBase):
+    # 视频保存参数（当 params['save_video'] 为 True 时会尝试保存）
+    save_video_flag = params.get('save_video', False)
+    save_video_path = OUTPUT_DIR / "camera_output.mp4"
+
+    # 用于跨线程/进程通信的 session_state 标志
+    if 'webrtc_running' not in st.session_state:
+        st.session_state['webrtc_running'] = False
+    if 'camera_output_path' not in st.session_state:
+        st.session_state['camera_output_path'] = None
+
+    # VideoProcessor 实现：尽量复用你原来的检测逻辑
+    class Processor(VideoProcessorBase):
         def __init__(self):
+            # 模型懒加载，保证只加载一次
             self.model_person = None
             self.model_dragon = None
+            self.classify_model_obj = None
+            self.classes = None
             self.device = params['device']
-            self.node_colors = params['node_colors']
-            self.line_color = params['line_color']
-            self.node_size = params['node_size']
-            self.line_thickness = params['line_thickness']
+            self.node_colors = params.get('node_colors', DEFAULT_NODE_COLORS)
+            self.line_color = params.get('line_color', DEFAULT_LINE_COLOR)
+            self.node_size = params.get('node_size', 10)
+            self.line_thickness = params.get('line_thickness', 6)
             self.person_conf, self.dragon_conf, self.person_kpt_conf, self.dragon_kpt_conf = params['confs']
 
+            # 为动作分类准备缓存（与原来行为保持）
+            self.class_buffer = deque(maxlen=30)
+            self.display_class = None
+
+            # 视频写入器（可选）
+            self.video_writer = None
+            self.video_writer_lock = threading.Lock()
+            self.fps_est = 0.0
+            self.last_time = time.time()
+
+            # 记录帧数用于 FPS
+            self._frame_count = 0
+            self._start_ts = time.time()
+
         def _init_models(self):
-            if self.model_person is None and not params['only_dragon']:
-                self.model_person = YOLO(str(params['person_model'])).to(self.device)
-            if self.model_dragon is None and not params['only_person']:
-                self.model_dragon = YOLO(str(params['dragon_model'])).to(self.device)
+            # 延迟加载模型（尽可能少阻塞主线程）
+            from ultralytics import YOLO
+            if self.model_person is None and not params.get('only_dragon', False):
+                person_model_path = Path(params['person_model'])
+                if not person_model_path.is_absolute():
+                    person_model_path = MODELS_DIR / person_model_path
+                self.model_person = YOLO(str(person_model_path)).to(self.device)
+            if self.model_dragon is None and not params.get('only_person', False):
+                dragon_model_path = Path(params['dragon_model'])
+                if not dragon_model_path.is_absolute():
+                    dragon_model_path = MODELS_DIR / dragon_model_path
+                self.model_dragon = YOLO(str(dragon_model_path)).to(self.device)
+            if params.get('classify', False) and params.get('classify_model', None) and self.classify_model_obj is None:
+                try:
+                    self.classify_model_obj, self.classes = load_classification_model(MODELS_DIR / params['classify_model'], self.device)
+                except Exception as e:
+                    # 如果分类模型加载失败，我们仍然继续，只是不启用分类
+                    self.classify_model_obj = None
+                    self.classes = None
+
+        def _maybe_init_video_writer(self, frame_h, frame_w, fps):
+            if not save_video_flag:
+                return
+            with self.video_writer_lock:
+                if self.video_writer is None:
+                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                    try:
+                        self.video_writer = cv2.VideoWriter(str(save_video_path), fourcc, fps if fps>0 else 20.0, (frame_w, frame_h))
+                    except Exception as e:
+                        # 初始化失败不抛出，只记录
+                        st.error(f"初始化视频写入器失败: {e}")
+                        self.video_writer = None
+
+        def _write_frame(self, frame_bgr):
+            if not save_video_flag:
+                return
+            with self.video_writer_lock:
+                if self.video_writer is not None:
+                    try:
+                        self.video_writer.write(frame_bgr)
+                    except Exception as e:
+                        # 写入错误忽略
+                        pass
+
+        def _release_writer(self):
+            with self.video_writer_lock:
+                if self.video_writer is not None:
+                    try:
+                        self.video_writer.release()
+                    except:
+                        pass
+                    self.video_writer = None
 
         def recv(self, frame):
+            # 初始化模型
             self._init_models()
+
+            # 转为 BGR numpy
             img = frame.to_ndarray(format="bgr24")
 
+            # update fps estimate
+            now = time.time()
+            dt = now - self.last_time
+            if dt > 0:
+                self.fps_est = 1.0 / dt
+            self.last_time = now
+
+            # 运行检测（尽量保持和你原来逻辑一致）
             person_results = None
             dragon_results = None
-            if self.model_person:
-                person_results = self.model_person(img, conf=self.person_conf, verbose=False)
-            if self.model_dragon:
-                dragon_results = self.model_dragon(img, conf=self.dragon_conf, verbose=False)
 
-            if person_results is not None:
-                img = person_results[0].plot(boxes=False)
+            try:
+                if self.model_person:
+                    person_results = self.model_person(img, conf=self.person_conf, verbose=False)
+                if self.model_dragon:
+                    dragon_results = self.model_dragon(img, conf=self.dragon_conf, verbose=False)
+            except Exception as e:
+                # 将错误写到页面日志（避免崩溃）
+                # 注意：不能直接调用 st.error 频繁刷新，这里只把异常放入 session_state
+                st.session_state['last_camera_error'] = str(e)
 
-            if dragon_results and dragon_results[0].keypoints is not None:
-                kpts = dragon_results[0].keypoints.xy.cpu().numpy()[0]
-                conf = dragon_results[0].keypoints.conf.cpu().numpy()[0]
-                for j, ((x, y), c) in enumerate(zip(kpts, conf)):
-                    if c > self.dragon_kpt_conf:
-                        color = self.node_colors[j % len(self.node_colors)]
-                        cv2.circle(img, (int(x), int(y)), self.node_size, color, -1)
-                for a, b in [[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8]]:
-                    if conf[a] > self.dragon_kpt_conf and conf[b] > self.dragon_kpt_conf:
-                        cv2.line(img, tuple(map(int, kpts[a])), tuple(map(int, kpts[b])),
-                                 self.line_color, self.line_thickness)
+            # 绘制人体检测结果（若有）
+            if person_results is not None and len(person_results) > 0:
+                try:
+                    img = person_results[0].plot(boxes=False)
+                except Exception:
+                    pass
 
+            # 绘制龙关键点与连线（若有）
+            if dragon_results is not None and len(dragon_results) > 0 and getattr(dragon_results[0], "keypoints", None) is not None:
+                try:
+                    boxes = dragon_results[0].boxes
+                    kpts_all = dragon_results[0].keypoints
+                    kpts = kpts_all.xy.cpu().numpy()
+                    confs = kpts_all.conf.cpu().numpy()
+
+                    # 单条龙优先逻辑与平滑逻辑 保持简化一致
+                    if len(kpts) > 0:
+                        # 选最有信心的实例
+                        if boxes is not None and hasattr(boxes, "conf") and len(boxes.conf) > 0:
+                            best_idx = int(np.argmax(boxes.conf.cpu().numpy()))
+                        else:
+                            mean_conf = np.nanmean(confs, axis=1)
+                            best_idx = int(np.argmax(mean_conf))
+                        kp_set = kpts[best_idx]
+                        kp_conf = confs[best_idx]
+
+                        # 画点与连线
+                        for j, ((x, y), c) in enumerate(zip(kp_set, kp_conf)):
+                            if c > self.dragon_kpt_conf:
+                                color = self.node_colors[j % len(self.node_colors)]
+                                cv2.circle(img, (int(x), int(y)), self.node_size, color, -1)
+                                cv2.putText(img, str(j+1), (int(x)+4, int(y)-4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+                        for a, b in DRAGON_SKELETON:
+                            if kp_conf[a] > self.dragon_kpt_conf and kp_conf[b] > self.dragon_kpt_conf:
+                                pt1, pt2 = tuple(map(int, kp_set[a])), tuple(map(int, kp_set[b]))
+                                cv2.line(img, pt1, pt2, self.line_color, self.line_thickness)
+
+                except Exception:
+                    pass
+
+            # 动作分类（尝试兼容原逻辑：收集一次帧的person/dragon输入并分类）
+            try:
+                if params.get('classify', False) and self.classify_model_obj is not None:
+                    # 复用 build_class_inputs（会返回 person_array, dragon_array）
+                    person_array, dragon_array = build_class_inputs(person_results, dragon_results, (img.shape[1], img.shape[0]))
+                    # 判断形状
+                    if person_array is not None and dragon_array is not None:
+                        label = classify_action(self.classify_model_obj, self.classes, person_array, dragon_array, self.device)
+                        if label is not None:
+                            self.class_buffer.append(label)
+                        if len(self.class_buffer) == self.class_buffer.maxlen:
+                            try:
+                                stable = statistics.mode(self.class_buffer)
+                                self.display_class = stable
+                            except Exception:
+                                pass
+                    if self.display_class is not None:
+                        img = put_chinese_text(img, f"Action: {self.display_class}")
+            except Exception:
+                pass
+
+            # 写入视频（如果开启）
+            # 初始化 writer 时需要帧高宽与FPS（采用我们估算或默认）
+            h, w = img.shape[:2]
+            self._maybe_init_video_writer(h, w, fps=self.fps_est)
+            self._write_frame(img)
+
+            # 更新全局状态（用于 UI 显示 GPU/CPU/FPS 等）
+            st.session_state['camera_fps'] = round(self.fps_est, 1)
+            if gpu_monitor:
+                # 仅更新一次显存/CPU读取（cheap ops)
+                st.session_state['camera_cpu'] = gpu_monitor.get_cpu_usage()
+                if gpu_monitor.use_gpu:
+                    mem_used, mem_cached = gpu_monitor.get_memory_usage()
+                    st.session_state['camera_gpu_mem_used'] = round(mem_used, 2)
+                    st.session_state['camera_gpu_mem_total'] = round(gpu_monitor.memory_total, 2)
+                else:
+                    st.session_state['camera_gpu_mem_used'] = 0
+                    st.session_state['camera_gpu_mem_total'] = 0
+
+            # 返回帧
             return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-    webrtc_streamer(
-        key="camera",
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration=RTC_CONFIGURATION,
-        video_processor_factory=VideoProcessor,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-    )
+        # 当 webRTC 停止时尽量释放写入器（可能不 guaranteed）
+        def on_stop(self):
+            try:
+                self._release_writer()
+                # 把输出路径放入 session_state 以便主线程读取
+                if save_video_flag and save_video_path.exists():
+                    st.session_state['camera_output_path'] = str(save_video_path)
+            except Exception:
+                pass
 
-                
+    # 启动 / 停止 控制
+    if start_btn and not st.session_state['webrtc_running']:
+        status_placeholder.info("摄像头运行中...（请在浏览器弹窗中允许摄像头）")
+        st.session_state['webrtc_running'] = True
+
+        # 启动 webrtc streamer（由按钮触发）
+        webrtc_ctx = webrtc_streamer(
+            key="camera_stream",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIGURATION,
+            video_processor_factory=Processor,
+            media_stream_constraints={"video": True, "audio": False},
+            async_processing=True,
+            device_selector=True,  # 前端可以选择设备
+        )
+
+    if stop_btn and st.session_state['webrtc_running']:
+        status_placeholder.success("摄像头已停止")
+        st.session_state['webrtc_running'] = False
+
+        # 尝试停止 webrtc：删除对应组件的 session_state（streamlit-webrtc 会响应）
+        # 注意：webrtc_streamer 没有显式 stop API，从 UI 停止通常由用户按组件 Stop 或刷新页面触发。
+        # 这里尝试清理 session keys，触发组件重新渲染
+        try:
+            st.session_state.pop("camera_stream", None)
+        except Exception:
+            pass
+
+        # 检查输出视频路径（若已写出）
+        if save_video_flag:
+            # 如果后台写入成功，会在 Processor.on_stop 中设置 camera_output_path
+            if st.session_state.get('camera_output_path'):
+                status_placeholder.info(f"录制视频已保存: {st.session_state['camera_output_path']}")
+            else:
+                status_placeholder.info("录制视频未生成或仍在写入中（如需确保生成，请等待几秒或刷新页面后检查）")
+
+    # 显示实时状态（FPS、GPU/CPU）
+    fps = st.session_state.get('camera_fps', None)
+    cpu = st.session_state.get('camera_cpu', None)
+    gpu_mem_used = st.session_state.get('camera_gpu_mem_used', None)
+    gpu_mem_total = st.session_state.get('camera_gpu_mem_total', None)
+    status_lines = []
+    if fps is not None:
+        status_lines.append(f"帧率: {fps} FPS")
+    if cpu is not None:
+        status_lines.append(f"CPU 使用: {cpu}%")
+    if gpu_monitor and gpu_monitor.use_gpu:
+        status_lines.append(f"显存: {gpu_mem_used}GB / {gpu_mem_total}GB")
+    if status_lines:
+        status_placeholder.info(" | ".join(status_lines))
+
+    # 如果已经有保存的录制路径，提供下载（尽量保持原来行为）
+    if st.session_state.get('camera_output_path'):
+        out_path = st.session_state['camera_output_path']
+        try:
+            with open(out_path, "rb") as f:
+                st.download_button("📥 下载录制视频", data=f, file_name="camera_recording.mp4", mime="video/mp4")
+        except Exception:
+            pass
+
+             
 # ---------------------- 检测可用摄像头 ----------------------
 @st.cache_resource(show_spinner=False)
 def get_available_cameras(max_test=5):
