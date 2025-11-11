@@ -1138,8 +1138,7 @@ def process_camera_stream(params, gpu_monitor=None):
             rtc_configuration=RTC_CONFIGURATION,
             video_processor_factory=Processor,
             media_stream_constraints={"video": True, "audio": False},
-            async_processing=True,
-            device_selector=True,  # 前端可以选择设备
+            async_processing=True
         )
 
     if stop_btn and st.session_state['webrtc_running']:
