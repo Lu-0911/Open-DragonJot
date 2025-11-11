@@ -17,6 +17,9 @@ from ultralytics import YOLO
 import time
 import psutil
 import base64
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+import av  # 处理视频帧
+
 
 # ---------------------- 路径配置 ----------------------
 SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -880,6 +883,68 @@ def process_camera(person_model, dragon_model, cam_id, confs, realtime_filter_me
             gpu_status_placeholder.empty()
             
         return output_video_path
+    
+
+def process_camera_stream(params, gpu_monitor=None):
+
+    RTC_CONFIGURATION = RTCConfiguration({
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+    })
+
+    class VideoProcessor(VideoProcessorBase):
+        def __init__(self):
+            self.model_person = None
+            self.model_dragon = None
+            self.device = params['device']
+            self.node_colors = params['node_colors']
+            self.line_color = params['line_color']
+            self.node_size = params['node_size']
+            self.line_thickness = params['line_thickness']
+            self.person_conf, self.dragon_conf, self.person_kpt_conf, self.dragon_kpt_conf = params['confs']
+
+        def _init_models(self):
+            if self.model_person is None and not params['only_dragon']:
+                self.model_person = YOLO(str(params['person_model'])).to(self.device)
+            if self.model_dragon is None and not params['only_person']:
+                self.model_dragon = YOLO(str(params['dragon_model'])).to(self.device)
+
+        def recv(self, frame):
+            self._init_models()
+            img = frame.to_ndarray(format="bgr24")
+
+            person_results = None
+            dragon_results = None
+            if self.model_person:
+                person_results = self.model_person(img, conf=self.person_conf, verbose=False)
+            if self.model_dragon:
+                dragon_results = self.model_dragon(img, conf=self.dragon_conf, verbose=False)
+
+            if person_results is not None:
+                img = person_results[0].plot(boxes=False)
+
+            if dragon_results and dragon_results[0].keypoints is not None:
+                kpts = dragon_results[0].keypoints.xy.cpu().numpy()[0]
+                conf = dragon_results[0].keypoints.conf.cpu().numpy()[0]
+                for j, ((x, y), c) in enumerate(zip(kpts, conf)):
+                    if c > self.dragon_kpt_conf:
+                        color = self.node_colors[j % len(self.node_colors)]
+                        cv2.circle(img, (int(x), int(y)), self.node_size, color, -1)
+                for a, b in [[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8]]:
+                    if conf[a] > self.dragon_kpt_conf and conf[b] > self.dragon_kpt_conf:
+                        cv2.line(img, tuple(map(int, kpts[a])), tuple(map(int, kpts[b])),
+                                 self.line_color, self.line_thickness)
+
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+    webrtc_streamer(
+        key="camera",
+        mode="sendrecv",
+        rtc_configuration=RTC_CONFIGURATION,
+        video_processor_factory=VideoProcessor,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
+
                 
 # ---------------------- 检测可用摄像头 ----------------------
 @st.cache_resource(show_spinner=False)
@@ -900,7 +965,7 @@ def get_available_cameras(max_test=5):
 def main():
     st.set_page_config(
         page_title="Open DragonJot - 舞龙动作识别检测系统",
-        page_icon="📝",
+        page_icon="🐉",
         layout="wide",
         initial_sidebar_state="expanded"
     )
@@ -1356,28 +1421,15 @@ def main():
 
         # 主内容区域 - 摄像头模式
         elif current_mode == "camera":
-            available_cameras = get_available_cameras()
-            if not available_cameras:
-                st.error("未检测到可用摄像头，请检查设备连接")
-            else:
-                cam_id = st.selectbox("选择摄像头", available_cameras, key="select_camera")
-                
-                # 预览区域
-                preview_placeholder = st.empty()
-                
-                # 控制按钮
-                col1, col2 = st.columns(2)
-                with col1:
-                    start_button = st.button("开始摄像头检测", width='stretch', type="primary", 
-                                          disabled=st.session_state.analysis_running, key="btn_start_camera")
-                with col2:
-                    stop_button = st.button("停止摄像头检测", width='stretch', 
-                                         disabled=not st.session_state.analysis_running, key="btn_stop_camera")
-                
-                st.info("浏览器正在请求摄像头权限，请允许！")
-                import camera_webrtc
+            st.info("🌐 正在使用浏览器摄像头")
+            st.markdown("请点击下方 **Start** 按钮以授权浏览器摄像头访问。")
 
-    
+            # 获取检测参数
+            params = get_params()
+
+            # 调用新的 WebRTC 摄像头处理逻辑
+            process_camera_stream(params, gpu_monitor)
+
     # 参数设置独立页面
     elif st.session_state.current_tab == "参数设置":
         st.markdown("<h1 style='text-align: center;'>参数设置</h1>", unsafe_allow_html=True)
@@ -1861,5 +1913,3 @@ def get_params():
 
 if __name__ == "__main__":
     main()
-
-
