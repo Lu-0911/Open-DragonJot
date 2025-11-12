@@ -21,7 +21,12 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfigurati
 import av
 import threading
 
-# ------------------ 并发访问控制逻辑 ------------------
+
+import streamlit as st
+import threading
+import psutil
+
+# ------------------ 👥 并发访问控制逻辑 ------------------
 
 @st.cache_resource
 def get_active_sessions():
@@ -30,7 +35,7 @@ def get_active_sessions():
     """
     return {"count": 0, "lock": threading.Lock()}
 
-MAX_USERS = 2       # 同时允许的最大访问人数
+MAX_USERS = 3       # 同时允许的最大访问人数
 MEM_THRESHOLD = 85  # 内存占用上限（百分比）
 
 def check_user_limit():
@@ -39,13 +44,13 @@ def check_user_limit():
     """
     sessions = get_active_sessions()
 
-    # 系统资源检测（防止 OOM）
+    # 检查系统内存
     mem = psutil.virtual_memory().percent
     if mem > MEM_THRESHOLD:
         st.error(f"⚠️ 服务器资源繁忙（内存使用 {mem:.1f}%），请稍后再试。")
         st.stop()
 
-    # 人数检测
+    # 检查用户数
     with sessions["lock"]:
         if sessions["count"] >= MAX_USERS:
             st.error("🚫 当前访问人数已满，请稍后再试 🙏")
@@ -58,38 +63,30 @@ def check_user_limit():
 
 def release_user():
     """
-    用户断开或刷新时释放访问名额。
+    用户离开或点击退出时释放访问名额。
     """
     sessions = get_active_sessions()
     with sessions["lock"]:
         if sessions["count"] > 0:
             sessions["count"] -= 1
+    st.session_state.clear()
     print(f"[INFO] 用户离开，当前在线人数: {sessions['count']}")
+    st.success("👋 您已成功退出，名额已释放。请关闭此页面。")
+    st.stop()
 
-def user_session_cleanup():
-    """
-    模拟 on_session_end：后台线程检测 session 是否中断。
-    """
-    while True:
-        time.sleep(5)
-        # 如果用户 session 被标记为已结束，就释放名额
-        if "_registered" in st.session_state and not st.session_state._is_running_with_streamlit:
-            release_user()
-            break
-
-# 初始化时检测用户上限
+# 初始化检测
 if "_registered" not in st.session_state:
     check_user_limit()
 
-# 后台监测线程，模拟 session 关闭检测（非阻塞）
-if "_cleanup_started" not in st.session_state:
-    threading.Thread(target=user_session_cleanup, daemon=True).start()
-    st.session_state["_cleanup_started"] = True
-
-# 在页面侧边栏显示当前状态
+# 在侧边栏显示当前在线状态
 with st.sidebar:
     sessions = get_active_sessions()
-    st.markdown(f"**当前在线用户数：** {sessions['count']} / {MAX_USERS}")
+    st.markdown(f"**👥 当前在线用户数：** {sessions['count']} / {MAX_USERS}")
+    st.markdown("---")
+    if st.button("🚪 退出应用"):
+        release_user()
+
+
 
 # ---------------------- 路径配置 ----------------------
 SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -2110,6 +2107,3 @@ def get_params():
 
 if __name__ == "__main__":
     main()
-
-
-
