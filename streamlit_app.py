@@ -78,14 +78,6 @@ def release_user():
 if "_registered" not in st.session_state:
     check_user_limit()
 
-# 在侧边栏显示当前在线状态
-with st.sidebar:
-    sessions = get_active_sessions()
-    st.markdown(f"**👥 当前在线用户数：** {sessions['count']} / {MAX_USERS}")
-    st.markdown("---")
-    if st.button("🚪 退出应用"):
-        release_user()
-
 
 
 # ---------------------- 路径配置 ----------------------
@@ -1218,6 +1210,13 @@ def main():
                          type="primary" if st.session_state.current_tab == "开发团队" else "secondary",
                          key="btn_team"):
         st.session_state.current_tab = "开发团队"
+    
+    sessions = get_active_sessions()
+    
+    if st.sidebar.button("退出应用", width='stretch', use_container_width=True):
+        release_user()
+    st.sidebar.markdown(f"**当前在线用户数：** {sessions['count']} / {MAX_USERS}")
+
 
     # 功能演示页面
     if st.session_state.current_tab == "功能演示":
