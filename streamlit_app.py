@@ -34,9 +34,9 @@ def get_active_sessions():
         "lock": threading.Lock()
     }
 
-MAX_USERS = 3
+MAX_USERS = 2
 MEM_THRESHOLD = 85
-DISCONNECT_TIMEOUT = 120  # 连接断开超时释放（秒）
+DISCONNECT_TIMEOUT = 60  # 连接断开超时释放（秒）
 HEARTBEAT_INTERVAL = 20   # 心跳更新时间间隔（秒）
 
 def get_session_id():
@@ -2148,4 +2148,5 @@ def get_params():
 
 if __name__ == "__main__":
     main()
+
 
