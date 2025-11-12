@@ -21,63 +21,105 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfigurati
 import av
 import threading
 
-
-import streamlit as st
-import threading
-import psutil
-
-# ------------------ 👥 并发访问控制逻辑 ------------------
+# ------------------ 并发访问控制逻辑 ------------------
 
 @st.cache_resource
 def get_active_sessions():
     """
-    全局共享的会话计数器（跨所有用户 session 共享）。
+    全局共享的会话计数器与心跳记录。
     """
-    return {"count": 0, "lock": threading.Lock()}
+    return {
+        "count": 0,
+        "last_heartbeat": {},  # {session_id: last_active_time}
+        "lock": threading.Lock()
+    }
 
-MAX_USERS = 3       # 同时允许的最大访问人数
-MEM_THRESHOLD = 85  # 内存占用上限（百分比）
+MAX_USERS = 3
+MEM_THRESHOLD = 85
+DISCONNECT_TIMEOUT = 120  # 连接断开超时释放（秒）
+HEARTBEAT_INTERVAL = 20   # 心跳更新时间间隔（秒）
+
+def get_session_id():
+    """获取当前用户唯一 ID"""
+    return id(st.session_state)
 
 def check_user_limit():
-    """
-    检查是否超过访问人数或系统资源限制。
-    """
+    """初次进入时检查系统资源与用户上限"""
     sessions = get_active_sessions()
 
-    # 检查系统内存
+    # 检查内存
     mem = psutil.virtual_memory().percent
     if mem > MEM_THRESHOLD:
         st.error(f"⚠️ 服务器资源繁忙（内存使用 {mem:.1f}%），请稍后再试。")
         st.stop()
 
-    # 检查用户数
+    # 检查人数
     with sessions["lock"]:
         if sessions["count"] >= MAX_USERS:
             st.error("🚫 当前访问人数已满，请稍后再试 🙏")
             st.stop()
         else:
+            sid = get_session_id()
             sessions["count"] += 1
+            sessions["last_heartbeat"][sid] = time.time()
             st.session_state["_registered"] = True
-            st.session_state["_user_id"] = id(st.session_state)
+            st.session_state["_user_id"] = sid
             print(f"[INFO] 新用户进入，当前在线人数: {sessions['count']}")
 
-def release_user():
-    """
-    用户离开或点击退出时释放访问名额。
-    """
+def release_user(silent=False):
+    """用户离开或点击退出时释放名额"""
     sessions = get_active_sessions()
+    sid = get_session_id()
     with sessions["lock"]:
         if sessions["count"] > 0:
             sessions["count"] -= 1
+        sessions["last_heartbeat"].pop(sid, None)
     st.session_state.clear()
     print(f"[INFO] 用户离开，当前在线人数: {sessions['count']}")
-    st.success("👋 您已成功退出，名额已释放。请关闭此页面。")
-    st.stop()
+    if not silent:
+        st.success("👋 您已成功退出，请关闭此页面。")
+        st.stop()
 
-# 初始化检测
+def heartbeat_updater():
+    """后台线程：周期性更新当前 session 的心跳时间"""
+    sid = get_session_id()
+    while True:
+        time.sleep(HEARTBEAT_INTERVAL)
+        if "_registered" not in st.session_state:
+            break
+        sessions = get_active_sessions()
+        with sessions["lock"]:
+            sessions["last_heartbeat"][sid] = time.time()
+
+def cleanup_disconnected_sessions():
+    """后台线程：清理超时未更新心跳的 session"""
+    while True:
+        time.sleep(15)
+        now = time.time()
+        sessions = get_active_sessions()
+        with sessions["lock"]:
+            expired = [
+                sid for sid, t in sessions["last_heartbeat"].items()
+                if now - t > DISCONNECT_TIMEOUT
+            ]
+            for sid in expired:
+                sessions["count"] = max(0, sessions["count"] - 1)
+                del sessions["last_heartbeat"][sid]
+                print(f"[INFO] 自动释放掉线用户 {sid}，当前人数: {sessions['count']}")
+
+# 初始化
 if "_registered" not in st.session_state:
     check_user_limit()
 
+# 启动心跳线程
+if "_heartbeat_started" not in st.session_state:
+    threading.Thread(target=heartbeat_updater, daemon=True).start()
+    st.session_state["_heartbeat_started"] = True
+
+# 启动清理线程（仅一次）
+if "_cleanup_started" not in st.session_state:
+    threading.Thread(target=cleanup_disconnected_sessions, daemon=True).start()
+    st.session_state["_cleanup_started"] = True
 
 
 # ---------------------- 路径配置 ----------------------
