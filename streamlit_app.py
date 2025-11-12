@@ -21,6 +21,9 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfigurati
 import av
 import threading
 
+import logging
+logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
+
 
 # ------------------ 并发访问控制逻辑 ------------------
 
@@ -31,7 +34,7 @@ def get_active_sessions():
     """
     return {"count": 0, "lock": threading.Lock()}
 
-MAX_USERS = 1       # 同时允许的最大访问人数
+MAX_USERS = 2       # 同时允许的最大访问人数
 MEM_THRESHOLD = 85  # 内存占用上限（百分比）
 
 def check_user_limit():
@@ -2111,4 +2114,5 @@ def get_params():
 
 if __name__ == "__main__":
     main()
+
 
