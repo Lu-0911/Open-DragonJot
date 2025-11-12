@@ -22,6 +22,67 @@ import av
 import threading
 
 
+import streamlit as st
+import threading
+import psutil
+
+# ------------------ 👥 并发访问控制逻辑 ------------------
+
+@st.cache_resource
+def get_active_sessions():
+    """
+    全局共享的会话计数器（跨所有用户 session 共享）。
+    """
+    return {"count": 0, "lock": threading.Lock()}
+
+MAX_USERS = 1       # 同时允许的最大访问人数
+MEM_THRESHOLD = 85  # 内存占用上限（百分比）
+
+def check_user_limit():
+    """
+    检查是否超过访问人数或系统资源限制。
+    """
+    sessions = get_active_sessions()
+
+    # 系统资源检测（防止 OOM）
+    mem = psutil.virtual_memory().percent
+    if mem > MEM_THRESHOLD:
+        st.error(f"⚠️ 服务器资源繁忙（内存使用 {mem:.1f}%），请稍后再试。")
+        st.stop()
+
+    # 人数检测
+    with sessions["lock"]:
+        if sessions["count"] >= MAX_USERS:
+            st.error("🚫 当前访问人数已满，请稍后再试 🙏")
+            st.stop()
+        else:
+            sessions["count"] += 1
+            st.session_state["_registered"] = True
+            st.session_state["_user_id"] = id(st.session_state)
+
+def release_user():
+    """
+    用户断开时释放占用的访问名额。
+    """
+    sessions = get_active_sessions()
+    with sessions["lock"]:
+        if sessions["count"] > 0:
+            sessions["count"] -= 1
+    print("[INFO] 当前在线用户数:", sessions["count"])
+
+# 初始化时检测用户上限
+if "_registered" not in st.session_state:
+    check_user_limit()
+
+# 用户关闭浏览器或刷新页面时自动回收名额
+st.on_session_end(release_user)
+
+# 在页面顶部显示当前状态
+with st.sidebar:
+    sessions = get_active_sessions()
+    st.markdown(f"**👥 当前在线用户数：** {sessions['count']} / {MAX_USERS}")
+
+
 # ---------------------- 路径配置 ----------------------
 SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = SCRIPT_DIR / "static"
