@@ -50,13 +50,13 @@ def check_user_limit():
     # 检查内存
     mem = psutil.virtual_memory().percent
     if mem > MEM_THRESHOLD:
-        st.error(f"⚠️ 服务器资源繁忙（内存使用 {mem:.1f}%），请稍后再试。")
+        st.error(f"⚠️ 服务器繁忙（内存使用 {mem:.1f}%），请稍后再试。")
         st.stop()
 
     # 检查人数
     with sessions["lock"]:
         if sessions["count"] >= MAX_USERS:
-            st.error("🚫 当前访问人数已满，请稍后再试 🙏")
+            st.error("🚫 服务器繁忙，请稍后再试 🙏")
             st.stop()
         else:
             sid = get_session_id()
@@ -2148,3 +2148,4 @@ def get_params():
 
 if __name__ == "__main__":
     main()
+
