@@ -22,11 +22,7 @@ import av
 import threading
 
 
-import streamlit as st
-import threading
-import psutil
-
-# ------------------ 👥 并发访问控制逻辑 ------------------
+# ------------------ 并发访问控制逻辑 ------------------
 
 @st.cache_resource
 def get_active_sessions():
@@ -35,7 +31,7 @@ def get_active_sessions():
     """
     return {"count": 0, "lock": threading.Lock()}
 
-MAX_USERS = 1       # 同时允许的最大访问人数
+MAX_USERS = 3       # 同时允许的最大访问人数
 MEM_THRESHOLD = 85  # 内存占用上限（百分比）
 
 def check_user_limit():
@@ -59,29 +55,42 @@ def check_user_limit():
             sessions["count"] += 1
             st.session_state["_registered"] = True
             st.session_state["_user_id"] = id(st.session_state)
+            print(f"[INFO] 新用户进入，当前在线人数: {sessions['count']}")
 
 def release_user():
     """
-    用户断开时释放占用的访问名额。
+    用户断开或刷新时释放访问名额。
     """
     sessions = get_active_sessions()
     with sessions["lock"]:
         if sessions["count"] > 0:
             sessions["count"] -= 1
-    print("[INFO] 当前在线用户数:", sessions["count"])
+    print(f"[INFO] 用户离开，当前在线人数: {sessions['count']}")
+
+def user_session_cleanup():
+    """
+    模拟 on_session_end：后台线程检测 session 是否中断。
+    """
+    while True:
+        time.sleep(5)
+        # 如果用户 session 被标记为已结束，就释放名额
+        if "_registered" in st.session_state and not st.session_state._is_running_with_streamlit:
+            release_user()
+            break
 
 # 初始化时检测用户上限
 if "_registered" not in st.session_state:
     check_user_limit()
 
-# 用户关闭浏览器或刷新页面时自动回收名额
-st.on_session_end(release_user)
+# 后台监测线程，模拟 session 关闭检测（非阻塞）
+if "_cleanup_started" not in st.session_state:
+    threading.Thread(target=user_session_cleanup, daemon=True).start()
+    st.session_state["_cleanup_started"] = True
 
-# 在页面顶部显示当前状态
+# 在页面侧边栏显示当前状态
 with st.sidebar:
     sessions = get_active_sessions()
     st.markdown(f"**👥 当前在线用户数：** {sessions['count']} / {MAX_USERS}")
-
 
 # ---------------------- 路径配置 ----------------------
 SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
