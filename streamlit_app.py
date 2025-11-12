@@ -21,10 +21,6 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfigurati
 import av
 import threading
 
-import logging
-logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
-
-
 # ------------------ 并发访问控制逻辑 ------------------
 
 @st.cache_resource
@@ -2114,5 +2110,6 @@ def get_params():
 
 if __name__ == "__main__":
     main()
+
 
 
