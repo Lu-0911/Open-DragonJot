@@ -31,7 +31,7 @@ def get_active_sessions():
     """
     return {"count": 0, "lock": threading.Lock()}
 
-MAX_USERS = 3       # 同时允许的最大访问人数
+MAX_USERS = 1       # 同时允许的最大访问人数
 MEM_THRESHOLD = 85  # 内存占用上限（百分比）
 
 def check_user_limit():
@@ -90,7 +90,7 @@ if "_cleanup_started" not in st.session_state:
 # 在页面侧边栏显示当前状态
 with st.sidebar:
     sessions = get_active_sessions()
-    st.markdown(f"**👥 当前在线用户数：** {sessions['count']} / {MAX_USERS}")
+    st.markdown(f"**当前在线用户数：** {sessions['count']} / {MAX_USERS}")
 
 # ---------------------- 路径配置 ----------------------
 SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -2111,3 +2111,4 @@ def get_params():
 
 if __name__ == "__main__":
     main()
+
